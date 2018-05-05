@@ -1,0 +1,11 @@
+#requirement: python 3.6, qt 5.10.1, should be >= 5.8, pyqt5 5.10.1, should be >= 5.8
+brew install qt 
+pip install pyqt5 
+pip install lxml requests PyPDF2 reportlab
+
+#save pytorch tutorials/doc from official website
+python crawler2pdf_pyqt5.py
+
+
+#crawler2pdf_pyqt4.py is not recommended, cann't prase math formulas right, image was split into two pages
+
