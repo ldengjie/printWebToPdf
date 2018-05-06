@@ -12,6 +12,7 @@ from PyPDF2 import  PdfFileWriter, PdfFileMerger, PdfFileReader
 from PyQt5 import QtGui,QtCore, QtWidgets, QtWebEngineWidgets
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
 
 #用来作业完成后，定时关闭
 class MyTimer(QtWidgets.QWidget):
@@ -33,12 +34,18 @@ class MyTimer(QtWidgets.QWidget):
 
 class PDF(object):
 
-    def __init__(self,pdfName):
+    def __init__(self,pdfName,texts,levels):
         self._outPdfName=pdfName
         self._outPdf= PdfFileWriter()
-        self._mergerPdfName="merger_"+pdfName
+        self._mergerPdfName="merger_"+self._outPdfName
         self._mergerPdf = PdfFileMerger()
-        self._pageNum = 0
+        self._mergerPageNum = 0
+        self._outlinePdfName="outline_"+self._outPdfName
+        self._outlinePageNum=0
+        self._numPdfName="num_"+self._outPdfName
+        self._pos= []
+        self._texts= texts
+        self._levels= levels
         try:
             os.remove(self._outPdfName)
         except OSError:
@@ -49,47 +56,74 @@ class PDF(object):
             pass
 
     def write(self):
+        self.addOutline()
         self.addPageNum()
-        with open(self._outPdfName,'wb') as fout:
-            print("saving to [%s]..."%(self._outPdfName))
-            if self._outPdf.getNumPages()>0:
-                self._outPdf.write(fout)
-            else:
-                self._mergerPdf.write(self._mergerPdfName)
-            print("saved [%s]"%(self._outPdfName))
+        self.addBookmark()
+        print("saving to [%s]..."%(self._outPdfName))
+        self._outPdf.write(open(self._outPdfName,'wb'))
+        print("saved [%s]"%(self._outPdfName))
 
     def append(self,newPdfName,bookmark=None):
         with open(newPdfName,'rb') as fnew:
             newpdf=PdfFileReader(fnew)
-            # self._pageNum+=newpdf.getNumPages()
-            # self._mergerPdf.append(newpdf)
-            self._mergerPdf.append(newpdf,"hh")
+            self._pos.append(self._mergerPageNum)
+            self._mergerPageNum+=newpdf.getNumPages()
+            self._mergerPdf.append(newpdf)
+
+    def addOutline(self):
+        coutline = canvas.Canvas(self._outlinePdfName,pagesize=A4)
+        coutline.drawString((100)*mm, (275)*mm, "Outline")
+        for pi in range(len(self._texts)):
+            text=self._texts[pi]
+            pos=self._pos[pi]+1
+            level=self._levels[pi]
+            lineStr=" "*8*(level-1)+text+" "*4+str(pos)
+            height=(250-10*(pi+1))%250+20
+            coutline.drawString((30)*mm, (height)*mm, lineStr)
+            if height == 20:
+                coutline.showPage()
+        coutline.showPage()
+        coutline.save()
+
+        outlinePdf = PdfFileReader(open(self._outlinePdfName, 'rb'),strict=False)
+        self._outlinePageNum=outlinePdf.getNumPages()
+        
+        for ci in range(self._outlinePageNum):
+            self._outPdf.addPage(outlinePdf.getPage(ci))
+        os.remove(self._outlinePdfName)
 
     def addPageNum(self):
-        numPdfName="num_"+self._outPdfName
         self._mergerPdf.write(self._mergerPdfName)
-        #
-        with open(self._mergerPdfName, 'rb') as fmerger:
-            mergerpdf = PdfFileReader(fmerger,strict=False)
-            n = mergerpdf.getNumPages()
-            c = canvas.Canvas(numPdfName)
-            for i in range(1,n+1): 
-                #A4 199mm
-                width=mergerpdf.getPage(0).mediaBox.getWidth()*0.352*0.95
-                #A4 4.4mm
-                height=mergerpdf.getPage(0).mediaBox.getHeight()*0.352*0.015
-                c.drawString((width)*mm, (height)*mm, str(i))
-                c.showPage()
-            c.save()
-            with open(numPdfName, 'rb') as fnum:
-                numberPdf = PdfFileReader(fnum)
-                for p in range(n):
-                    print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName))
-                    page = mergerpdf.getPage(p)
-                    numberLayer = numberPdf.getPage(p)
-                    page.mergePage(numberLayer)
-                    self._outPdf.addPage(page)
-            os.remove(numPdfName)
+        mergerpdf = PdfFileReader(open(self._mergerPdfName, 'rb'),strict=False)
+        n = mergerpdf.getNumPages()
+        c = canvas.Canvas(self._numPdfName)
+        for i in range(1,n+1): 
+            #A4 199mm
+            width=mergerpdf.getPage(0).mediaBox.getWidth()*0.352*0.95
+            #A4 4.4mm
+            height=mergerpdf.getPage(0).mediaBox.getHeight()*0.352*0.015
+            c.drawString((width)*mm, (height)*mm, str(i))
+            c.showPage()
+        c.save()
+        numberPdf = PdfFileReader(open(self._numPdfName, 'rb'))
+        for p in range(n):
+            print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName))
+            page = mergerpdf.getPage(p)
+            numberLayer = numberPdf.getPage(p)
+            page.mergePage(numberLayer)
+            self._outPdf.addPage(page)
+        os.remove(self._numPdfName)
+
+    def addBookmark(self):
+        parent=self._outPdf.addBookmark("Outline",0,None)
+        for ti in range(len(self._texts)):
+            text=self._texts[ti]
+            pos=self._pos[ti]+self._outlinePageNum
+            level=self._levels[ti]
+            if level==1:
+               parent=self._outPdf.addBookmark(text,pos,None)
+            elif level==2:
+               child=self._outPdf.addBookmark(text,pos,parent)
 
 class WebPage(QtWebEngineWidgets.QWebEnginePage):
 
@@ -111,10 +145,10 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
             t.start()
 
     #第一次触发fetchNext()
-    def start(self, urls,pdfname):
+    def start(self, urls,texts,levels,pdfname):
         self._urls = iter(urls)
         self._pdfname=pdfname
-        self._pdf= PDF(pdfname)
+        self._pdf= PDF(pdfname,texts,levels)
         self.fetchNext()
 
     #加载网页load
@@ -160,22 +194,45 @@ setcssrule("#MathJax_Message","display","none")
 
     #网页元素loadFinished时，和js/render是独立的，此时js不一定运行完，网页不一定渲染出来
     def handleLoadFinished(self):
-        #waiting for parsing math formulas
-        time.sleep(1)
         self.set_MathJax_Message()
+        #waiting for parsing math formulas
+        loop = QtCore.QEventLoop()
+        QtCore.QTimer.singleShot(1000, loop.quit);
+        loop.exec_()
         self.toHtml(self.printpdf)
+
 
 def prasePytorchUrl(baseurl):
     page=requests.Session().get(baseurl) 
     htmlcontent=html.fromstring(page.text) 
     version=htmlcontent.xpath('//div[@class="version"]/text()')[0].replace(" ","").replace("\n","")
-    aurl=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a/@href')
-    outlineurl=[]
+    aclass=htmlcontent.xpath('//li[(contains(@class,"l1") or contains(@class,"l2")) and a/text()!="" ]/@class')
+    aurl=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a[text()!=""]/@href')
+    atext=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a[text()!=""]/text()')
+    # atext=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a/span/text()')
     #去重，去掉网页内的跳转链接
-    [outlineurl.append(baseurl+str(val)) for val in aurl if str(val).count("#")==0 and not baseurl+str(val) in outlineurl]
+    # [outlineurl.append(baseurl+str(val)) for val in aurl if str(val).count("#")==0 and not baseurl+str(val) in outlineurl]
+    outlineurl=[]
+    outlinetext=[]
+    outlinelevel=[]
+    for ui in range(len(aurl)):
+        urlStr=baseurl+str(aurl[ui])
+        text=str(atext[ui])
+        classStr=str(aclass[ui])
+        if urlStr.count("#")==0 and not urlStr in outlineurl:
+            outlineurl.append(urlStr)
+            outlinetext.append(text)
+            if classStr.count("l1")>0:
+                outlinelevel.append(1)
+            elif classStr.count("l2")>0:
+                outlinelevel.append(2)
+            else:
+                outlinelevel.append(0)
     #加上起始页本身
     outlineurl.insert(0,baseurl)
-    return outlineurl,version
+    outlinetext.insert(0,"Introduction")
+    outlinelevel.insert(0,1)
+    return outlineurl,outlinetext,outlinelevel,version
 
 if __name__ == '__main__':
 
@@ -186,16 +243,14 @@ if __name__ == '__main__':
     t=MyTimer()
 
     #pytorch docs
-    # pytorchDocPage = WebPage()
-    # pytorchDocUrl,pytorchDocVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
-    # # pytorchDocPage.start(pytorchDocUrl[16:20],"test2_pytorch_docs_%s.pdf"%(pytorchDocVersion))
-    # pytorchDocPage.start(pytorchDocUrl,"pytorch_docs_%s.pdf"%(pytorchDocVersion))
+    pytorchDocsPage = WebPage()
+    pytorchDocsUrl,pytorchDocsText,pytorchDocsLevel,pytorchDocsVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
+    pytorchDocsPage.start(pytorchDocsUrl,pytorchDocsText,pytorchDocsLevel,"pytorch_docs_%s.pdf"%(pytorchDocsVersion))
 
     #pytorch tutorials
-    pytorchTutorialsPage = WebPage()
-    pytorchTutorialsUrl,pytorchTutorialsVersion=prasePytorchUrl('https://pytorch.org/tutorials/')
-    # pytorchTutorialsPage.start(pytorchTutorialsUrl[15:20],"test2_pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
-    pytorchTutorialsPage.start(pytorchTutorialsUrl,"pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
+    # pytorchTutorialsPage = WebPage()
+    # pytorchTutorialsUrl,pytorchTutorialsText,pytorchTutorialsLevel,pytorchTutorialsVersion=prasePytorchUrl('https://pytorch.org/tutorials/')
+    # pytorchTutorialsPage.start(pytorchTutorialsUrl,pytorchTutorialsText,pytorchTutorialsLevel,"pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
 
     #以上是窗口程序的定义，exec才开始运行
     sys.exit(app.exec())
