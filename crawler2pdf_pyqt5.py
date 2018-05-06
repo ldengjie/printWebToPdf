@@ -136,6 +136,8 @@ setcssrule("#MathJax_Message","display","none")
 
     #网页元素loadFinished时，和js/render是独立的，此时js不一定运行完，网页不一定渲染出来
     def handleLoadFinished(self):
+        #waiting for parsing math formulas
+        time.sleep(1)
         self.set_MathJax_Message()
         self.toHtml(self.printpdf)
 
