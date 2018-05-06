@@ -161,11 +161,11 @@ if __name__ == '__main__':
     global t
     t=MyTimer()
 
-    #pytorch doc
+    #pytorch docs
     pytorchDocPage = WebPage()
     pytorchDocUrl,pytorchDocVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
-    # pytorchDocPage.start(pytorchDocUrl[16:20],"test2_pytorch_doc_%s.pdf"%(pytorchDocVersion))
-    pytorchDocPage.start(pytorchDocUrl,"pytorch_doc_%s.pdf"%(pytorchDocVersion))
+    # pytorchDocPage.start(pytorchDocUrl[16:20],"test2_pytorch_docs_%s.pdf"%(pytorchDocVersion))
+    pytorchDocPage.start(pytorchDocUrl,"pytorch_docs_%s.pdf"%(pytorchDocVersion))
 
     #pytorch tutorials
     pytorchTutorialsPage = WebPage()
