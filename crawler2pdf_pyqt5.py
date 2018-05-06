@@ -8,7 +8,7 @@ import os
 import requests
 import time
 from lxml import html
-from PyPDF2 import  PdfFileWriter,PdfFileMerger, PdfFileReader
+from PyPDF2 import  PdfFileWriter, PdfFileMerger, PdfFileReader
 from PyQt5 import QtGui,QtCore, QtWidgets, QtWebEngineWidgets
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
@@ -31,6 +31,66 @@ class MyTimer(QtWidgets.QWidget):
         if self.count<=0:
             QtWidgets.qApp.quit()
 
+class PDF(object):
+
+    def __init__(self,pdfName):
+        self._outPdfName=pdfName
+        self._outPdf= PdfFileWriter()
+        self._mergerPdfName="merger_"+pdfName
+        self._mergerPdf = PdfFileMerger()
+        self._pageNum = 0
+        try:
+            os.remove(self._outPdfName)
+        except OSError:
+            pass
+        try:
+            os.remove(self._mergerPdfName)
+        except OSError:
+            pass
+
+    def write(self):
+        self.addPageNum()
+        with open(self._outPdfName,'wb') as fout:
+            print("saving to [%s]..."%(self._outPdfName))
+            if self._outPdf.getNumPages()>0:
+                self._outPdf.write(fout)
+            else:
+                self._mergerPdf.write(self._mergerPdfName)
+            print("saved [%s]"%(self._outPdfName))
+
+    def append(self,newPdfName,bookmark=None):
+        with open(newPdfName,'rb') as fnew:
+            newpdf=PdfFileReader(fnew)
+            # self._pageNum+=newpdf.getNumPages()
+            # self._mergerPdf.append(newpdf)
+            self._mergerPdf.append(newpdf,"hh")
+
+    def addPageNum(self):
+        numPdfName="num_"+self._outPdfName
+        self._mergerPdf.write(self._mergerPdfName)
+        #
+        with open(self._mergerPdfName, 'rb') as fmerger:
+            mergerpdf = PdfFileReader(fmerger,strict=False)
+            n = mergerpdf.getNumPages()
+            c = canvas.Canvas(numPdfName)
+            for i in range(1,n+1): 
+                #A4 199mm
+                width=mergerpdf.getPage(0).mediaBox.getWidth()*0.352*0.95
+                #A4 4.4mm
+                height=mergerpdf.getPage(0).mediaBox.getHeight()*0.352*0.015
+                c.drawString((width)*mm, (height)*mm, str(i))
+                c.showPage()
+            c.save()
+            with open(numPdfName, 'rb') as fnum:
+                numberPdf = PdfFileReader(fnum)
+                for p in range(n):
+                    print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName))
+                    page = mergerpdf.getPage(p)
+                    numberLayer = numberPdf.getPage(p)
+                    page.mergePage(numberLayer)
+                    self._outPdf.addPage(page)
+            os.remove(numPdfName)
+
 class WebPage(QtWebEngineWidgets.QWebEnginePage):
 
     global t
@@ -40,57 +100,21 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         #完成加载后,触发fetchNext()
         self.loadFinished.connect(self.handleLoadFinished)
         #打印pdf后,触发合并pdf，不能加载后触发，那时最后一个pdf来不及打印
-        self.pdfPrintingFinished.connect(self.mergepdf)
+        self.pdfPrintingFinished.connect(self.appendpdf)
 
-    def mergepdf(self,filename):
-        self.merger.append(PdfFileReader(open(filename, 'rb')))
+    def appendpdf(self,filename):
+        self._pdf.append(filename)
         os.remove(filename)
         if not self.fetchNext():
-            print('merge pdfs to [%s]'%(self.finalFile))
-            self.merger.write(self.finalFile)
-            self.addPageNumToPdf(self.finalFile)
+            print('save merged pdfs to [%s]'%(self._pdfname))
+            self._pdf.write()
             t.start()
 
-    def addPageNumToPdf(self, finalFile):
-        finalFileWithNum=finalFile.replace(".pdf","")+"_withPageNum.pdf"
-        try:
-            os.remove(finalFileWithNum)
-        except OSError:
-            pass
-        output = PdfFileWriter()
-        with open(finalFile, 'rb') as f:
-            pdf = PdfFileReader(f,strict=False)
-            n = pdf.getNumPages()
-            tmp="pagenumber_"+finalFile
-            c = canvas.Canvas(tmp)
-            for i in range(1,n+1): 
-                #A4大小210*297mm,后续可以通过QWebEnginePage自动判断纸张大小,-10mm
-                c.drawString((200)*mm, (4)*mm, str(i))
-                c.showPage()
-            c.save()
-            with open(tmp, 'rb') as ftmp:
-                numberPdf = PdfFileReader(ftmp)
-                for p in range(n):
-                    print("add page number %d/%d to [%s]"%(p+1,n,finalFile))
-                    page = pdf.getPage(p)
-                    numberLayer = numberPdf.getPage(p)
-                    page.mergePage(numberLayer)
-                    output.addPage(page)
-            with open(finalFileWithNum,'wb') as f:
-                print("saving to [%s]..."%(finalFileWithNum))
-                output.write(f)
-                print("saved [%s]"%(finalFileWithNum))
-            os.remove(tmp)
-
     #第一次触发fetchNext()
-    def start(self, urls,finalFile):
+    def start(self, urls,pdfname):
         self._urls = iter(urls)
-        self.finalFile= finalFile
-        self.merger = PdfFileMerger()
-        try:
-            os.remove(self.finalFile)
-        except OSError:
-            pass
+        self._pdfname=pdfname
+        self._pdf= PDF(pdfname)
         self.fetchNext()
 
     #加载网页load
@@ -130,9 +154,9 @@ setcssrule("#MathJax_Message","display","none")
 
     def printpdf(self, html):
         url = self.url().toString()
-        pdfname=str(int(round(time.time() * 1000)))+".pdf"
-        print('save [%d bytes %s] to [%s]' % (len(html),url,pdfname))
-        self.printToPdf(pdfname, QtGui.QPageLayout(QtGui.QPageSize(QtGui.QPageSize.A4 ), QtGui.QPageLayout.Portrait, QtCore.QMarginsF(0,0,0,0)))
+        pdfName=str(int(round(time.time() * 1000)))+".pdf"
+        print('save [%d bytes %s] to [%s]' % (len(html),url,pdfName))
+        self.printToPdf(pdfName, QtGui.QPageLayout(QtGui.QPageSize(QtGui.QPageSize.A4 ), QtGui.QPageLayout.Portrait, QtCore.QMarginsF(0,0,0,0)))
 
     #网页元素loadFinished时，和js/render是独立的，此时js不一定运行完，网页不一定渲染出来
     def handleLoadFinished(self):
@@ -162,15 +186,15 @@ if __name__ == '__main__':
     t=MyTimer()
 
     #pytorch docs
-    pytorchDocPage = WebPage()
-    pytorchDocUrl,pytorchDocVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
-    # pytorchDocPage.start(pytorchDocUrl[16:20],"test2_pytorch_docs_%s.pdf"%(pytorchDocVersion))
-    pytorchDocPage.start(pytorchDocUrl,"pytorch_docs_%s.pdf"%(pytorchDocVersion))
+    # pytorchDocPage = WebPage()
+    # pytorchDocUrl,pytorchDocVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
+    # # pytorchDocPage.start(pytorchDocUrl[16:20],"test2_pytorch_docs_%s.pdf"%(pytorchDocVersion))
+    # pytorchDocPage.start(pytorchDocUrl,"pytorch_docs_%s.pdf"%(pytorchDocVersion))
 
     #pytorch tutorials
     pytorchTutorialsPage = WebPage()
     pytorchTutorialsUrl,pytorchTutorialsVersion=prasePytorchUrl('https://pytorch.org/tutorials/')
-    # pytorchTutorialsPage.start(pytorchTutorialsUrl[16:20],"test2_pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
+    # pytorchTutorialsPage.start(pytorchTutorialsUrl[15:20],"test2_pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
     pytorchTutorialsPage.start(pytorchTutorialsUrl,"pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
 
     #以上是窗口程序的定义，exec才开始运行
