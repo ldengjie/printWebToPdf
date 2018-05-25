@@ -2,6 +2,8 @@
 #brew install qt //5.10.1, should be >= 5.8
 #pip3 install pyqt5 //5.10.1, should be >= 5.8
 #pip install lxml requests PyPDF2 reportlab
+#in PDF class don't use "with" to open pdf file otherwise it will lead to confusion. 
+#qt version shoule be >=5.8 otherwise an image will break into multiple pages.
 
 import sys 
 import os
@@ -13,6 +15,7 @@ from PyQt5 import QtGui,QtCore, QtWidgets, QtWebEngineWidgets
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.colors import HexColor
 
 #用来作业完成后，定时关闭
 class MyTimer(QtWidgets.QWidget):
@@ -34,7 +37,9 @@ class MyTimer(QtWidgets.QWidget):
 
 class PDF(object):
 
-    def __init__(self,pdfName,texts,levels):
+    def __init__(self,version,urls,pdfName,texts,levels):
+        self._urls=urls
+        self._version=version
         self._outPdfName=pdfName
         self._outPdf= PdfFileWriter()
         self._mergerPdfName="merger_"+self._outPdfName
@@ -59,9 +64,8 @@ class PDF(object):
         self.addOutline()
         self.addPageNum()
         self.addBookmark()
-        print("saving to [%s]..."%(self._outPdfName))
+        print("save [%s]..."%(self._outPdfName))
         self._outPdf.write(open(self._outPdfName,'wb'))
-        print("saved [%s]"%(self._outPdfName))
 
     def append(self,newPdfName,bookmark=None):
         with open(newPdfName,'rb') as fnew:
@@ -71,6 +75,7 @@ class PDF(object):
             self._mergerPdf.append(newpdf)
 
     def addOutline(self):
+        print("add outline to [%s]"%(self._outPdfName))
         coutline = canvas.Canvas(self._outlinePdfName,pagesize=A4)
         coutline.drawString((100)*mm, (275)*mm, "Outline")
         for pi in range(len(self._texts)):
@@ -82,6 +87,20 @@ class PDF(object):
             coutline.drawString((30)*mm, (height)*mm, lineStr)
             if height == 20:
                 coutline.showPage()
+            #增加网址和邮箱信息
+            if pi==len(self._texts)-1:
+                coutline.setFont('Helvetica',9)
+                coutline.setFillColor(HexColor(0xff8100))
+                pi+=1
+                height=(250-10*(pi+1))%250+20
+                lineStr="Printed v"+self._version+" from [ "+self._urls[0]+" ] at "+time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())+"."
+                coutline.drawString((30)*mm, (height)*mm, lineStr)
+                height-=5
+                lineStr="Visit [ https://download.csdn.net/user/ldengjie/uploads ] to get the latest version pdf"
+                coutline.drawString((30)*mm, (height)*mm, lineStr)
+                height-=5
+                lineStr="or mail to ldengjie@163.com to ask for printing and updating the latest version pdf."
+                coutline.drawString((30)*mm, (height)*mm, lineStr)
         coutline.showPage()
         coutline.save()
 
@@ -107,14 +126,16 @@ class PDF(object):
         c.save()
         numberPdf = PdfFileReader(open(self._numPdfName, 'rb'))
         for p in range(n):
-            print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName))
+            print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName),end='\r')
             page = mergerpdf.getPage(p)
             numberLayer = numberPdf.getPage(p)
             page.mergePage(numberLayer)
             self._outPdf.addPage(page)
+        print("")
         os.remove(self._numPdfName)
 
     def addBookmark(self):
+        print("add bookmark to [%s]"%(self._outPdfName))
         parent=self._outPdf.addBookmark("Outline",0,None)
         for ti in range(len(self._texts)):
             text=self._texts[ti]
@@ -145,10 +166,10 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
             t.start()
 
     #第一次触发fetchNext()
-    def start(self, urls,texts,levels,pdfname):
+    def start(self,version,urls,texts,levels,pdfname):
         self._urls = iter(urls)
-        self._pdfname=pdfname
-        self._pdf= PDF(pdfname,texts,levels)
+        self._pdfname=pdfname.replace(".pdf","_")+version+".pdf"
+        self._pdf= PDF(version,urls,self._pdfname,texts,levels)
         self.fetchNext()
 
     #加载网页load
@@ -209,7 +230,6 @@ def prasePytorchUrl(baseurl):
     aclass=htmlcontent.xpath('//li[(contains(@class,"l1") or contains(@class,"l2")) and a/text()!="" ]/@class')
     aurl=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a[text()!=""]/@href')
     atext=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a[text()!=""]/text()')
-    # atext=htmlcontent.xpath('//li[contains(@class,"l1") or contains(@class,"l2")]/a/span/text()')
     #去重，去掉网页内的跳转链接
     # [outlineurl.append(baseurl+str(val)) for val in aurl if str(val).count("#")==0 and not baseurl+str(val) in outlineurl]
     outlineurl=[]
@@ -245,12 +265,12 @@ if __name__ == '__main__':
     #pytorch docs
     pytorchDocsPage = WebPage()
     pytorchDocsUrl,pytorchDocsText,pytorchDocsLevel,pytorchDocsVersion=prasePytorchUrl('https://pytorch.org/docs/stable/')
-    pytorchDocsPage.start(pytorchDocsUrl,pytorchDocsText,pytorchDocsLevel,"pytorch_docs_%s.pdf"%(pytorchDocsVersion))
+    pytorchDocsPage.start(pytorchDocsVersion,pytorchDocsUrl,pytorchDocsText,pytorchDocsLevel,"pytorch_docs.pdf")
 
     #pytorch tutorials
     # pytorchTutorialsPage = WebPage()
     # pytorchTutorialsUrl,pytorchTutorialsText,pytorchTutorialsLevel,pytorchTutorialsVersion=prasePytorchUrl('https://pytorch.org/tutorials/')
-    # pytorchTutorialsPage.start(pytorchTutorialsUrl,pytorchTutorialsText,pytorchTutorialsLevel,"pytorch_tutorials_%s.pdf"%(pytorchTutorialsVersion))
+    # pytorchTutorialsPage.start(pytorchTutorialsVersion,pytorchTutorialsUrl,pytorchTutorialsText,pytorchTutorialsLevel,"pytorch_tutorials.pdf")
 
     #以上是窗口程序的定义，exec才开始运行
     sys.exit(app.exec())
