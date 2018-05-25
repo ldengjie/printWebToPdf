@@ -8,7 +8,7 @@ import os
 import requests
 import time
 from lxml import html
-from PyPDF2 import  PdfFileWriter,PdfFileMerger, PdfFileReader
+from PyPDF2 import  PdfFileWriter, PdfFileMerger, PdfFileReader
 from PyQt5 import QtGui,QtCore, QtWidgets, QtWebEngineWidgets
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
@@ -32,41 +32,46 @@ class MyTimer(QtWidgets.QWidget):
         if self.count<=0:
             QtWidgets.qApp.quit()
 
-class WebPage(QtWebEngineWidgets.QWebEnginePage):
+class PDF(object):
 
-    global t
-    def __init__(self):
-        super(WebPage, self).__init__()
-        #注册事件，并不是立即执行
-        #完成加载后,触发fetchNext()
-        self.loadFinished.connect(self.handleLoadFinished)
-        #打印pdf后,触发合并pdf，不能加载后触发，那时最后一个pdf来不及打印
-        self.pdfPrintingFinished.connect(self.mergepdf)
-
-    def mergepdf(self,filename):
-        with open(filename, 'rb') as f:
-            pdf = PdfFileReader(f,strict=False)
-            self._pos.append(self._num)
-            self._num+=pdf.getNumPages()
-            self.merger.append(pdf)
-        os.remove(filename)
-        if not self.fetchNext():
-            print('merge pdfs to [%s]'%(self.finalFile))
-            self.merger.write(self.finalFile)
-            self.addPageNumToPdf(self.finalFile)
-            t.start()
-
-    def addPageNumToPdf(self, finalFile):
-        finalFileWithNum=finalFile.replace(".pdf","")+"_withPageNum.pdf"
+    def __init__(self,pdfName,texts,levels):
+        self._outPdfName=pdfName
+        self._outPdf= PdfFileWriter()
+        self._mergerPdfName="merger_"+self._outPdfName
+        self._mergerPdf = PdfFileMerger()
+        self._mergerPageNum = 0
+        self._outlinePdfName="outline_"+self._outPdfName
+        self._outlinePageNum=0
+        self._numPdfName="num_"+self._outPdfName
+        self._pos= []
+        self._texts= texts
+        self._levels= levels
         try:
-            os.remove(finalFileWithNum)
+            os.remove(self._outPdfName)
+        except OSError:
+            pass
+        try:
+            os.remove(self._mergerPdfName)
         except OSError:
             pass
 
-        output = PdfFileWriter()
+    def write(self):
+        self.addOutline()
+        self.addPageNum()
+        self.addBookmark()
+        print("saving to [%s]..."%(self._outPdfName))
+        self._outPdf.write(open(self._outPdfName,'wb'))
+        print("saved [%s]"%(self._outPdfName))
 
-        outlinepage="outline_"+finalFile
-        coutline = canvas.Canvas(outlinepage,pagesize=A4)
+    def append(self,newPdfName,bookmark=None):
+        with open(newPdfName,'rb') as fnew:
+            newpdf=PdfFileReader(fnew)
+            self._pos.append(self._mergerPageNum)
+            self._mergerPageNum+=newpdf.getNumPages()
+            self._mergerPdf.append(newpdf)
+
+    def addOutline(self):
+        coutline = canvas.Canvas(self._outlinePdfName,pagesize=A4)
         coutline.drawString((100)*mm, (275)*mm, "Outline")
         for pi in range(len(self._texts)):
             text=self._texts[pi]
@@ -80,56 +85,70 @@ class WebPage(QtWebEngineWidgets.QWebEnginePage):
         coutline.showPage()
         coutline.save()
 
-        cpage = PdfFileReader(open(outlinepage, 'rb'),strict=False)
-        cpagenum=cpage.getNumPages()
+        outlinePdf = PdfFileReader(open(self._outlinePdfName, 'rb'),strict=False)
+        self._outlinePageNum=outlinePdf.getNumPages()
         
-        for ci in range(cpagenum):
-            output.addPage(cpage.getPage(ci))
+        for ci in range(self._outlinePageNum):
+            self._outPdf.addPage(outlinePdf.getPage(ci))
+        os.remove(self._outlinePdfName)
 
-        pdf = PdfFileReader(open(finalFile, 'rb'),strict=False)
-        n = pdf.getNumPages()
-        tmp="pagenumber_"+finalFile
-        c = canvas.Canvas(tmp)
+    def addPageNum(self):
+        self._mergerPdf.write(self._mergerPdfName)
+        mergerpdf = PdfFileReader(open(self._mergerPdfName, 'rb'),strict=False)
+        n = mergerpdf.getNumPages()
+        c = canvas.Canvas(self._numPdfName)
         for i in range(1,n+1): 
-            #A4大小210*297mm,后续可以通过QWebEnginePage自动判断纸张大小,-10mm
-            c.drawString((200)*mm, (4)*mm, str(i))
+            #A4 199mm
+            width=mergerpdf.getPage(0).mediaBox.getWidth()*0.352*0.95
+            #A4 4.4mm
+            height=mergerpdf.getPage(0).mediaBox.getHeight()*0.352*0.015
+            c.drawString((width)*mm, (height)*mm, str(i))
             c.showPage()
         c.save()
-        numberPdf = PdfFileReader(open(tmp, 'rb'))
+        numberPdf = PdfFileReader(open(self._numPdfName, 'rb'))
         for p in range(n):
-            print("add page number %d/%d to [%s]"%(p+1,n,finalFile))
-            page = pdf.getPage(p)
+            print("add page number %d/%d to [%s]"%(p+1,n,self._outPdfName))
+            page = mergerpdf.getPage(p)
             numberLayer = numberPdf.getPage(p)
             page.mergePage(numberLayer)
-            output.addPage(page)
-        os.remove(tmp)
+            self._outPdf.addPage(page)
+        os.remove(self._numPdfName)
 
-        print("saving to [%s]..."%(finalFileWithNum))
+    def addBookmark(self):
+        parent=self._outPdf.addBookmark("Outline",0,None)
         for ti in range(len(self._texts)):
             text=self._texts[ti]
-            pos=self._pos[ti]+cpagenum
+            pos=self._pos[ti]+self._outlinePageNum
             level=self._levels[ti]
             if level==1:
-               parent=output.addBookmark(text,pos,None)
+               parent=self._outPdf.addBookmark(text,pos,None)
             elif level==2:
-               child=output.addBookmark(text,pos,parent)
-            # output.addBookmark(self._texts[ti],self._pos[ti])
-        output.write(open(finalFileWithNum,'wb'))
-        print("saved [%s]"%(finalFileWithNum))
+               child=self._outPdf.addBookmark(text,pos,parent)
+
+class WebPage(QtWebEngineWidgets.QWebEnginePage):
+
+    global t
+    def __init__(self):
+        super(WebPage, self).__init__()
+        #注册事件，并不是立即执行
+        #完成加载后,触发fetchNext()
+        self.loadFinished.connect(self.handleLoadFinished)
+        #打印pdf后,触发合并pdf，不能加载后触发，那时最后一个pdf来不及打印
+        self.pdfPrintingFinished.connect(self.appendpdf)
+
+    def appendpdf(self,filename):
+        self._pdf.append(filename)
+        os.remove(filename)
+        if not self.fetchNext():
+            print('save merged pdfs to [%s]'%(self._pdfname))
+            self._pdf.write()
+            t.start()
 
     #第一次触发fetchNext()
-    def start(self, urls,texts,levels,finalFile):
+    def start(self, urls,texts,levels,pdfname):
         self._urls = iter(urls)
-        self._texts= texts
-        self._levels= levels
-        self._num=0
-        self._pos=[]
-        self.finalFile= finalFile
-        self.merger = PdfFileMerger()
-        try:
-            os.remove(self.finalFile)
-        except OSError:
-            pass
+        self._pdfname=pdfname
+        self._pdf= PDF(pdfname,texts,levels)
         self.fetchNext()
 
     #加载网页load
@@ -169,9 +188,9 @@ setcssrule("#MathJax_Message","display","none")
 
     def printpdf(self, html):
         url = self.url().toString()
-        pdfname=str(int(round(time.time() * 1000)))+".pdf"
-        print('save [%d bytes %s] to [%s]' % (len(html),url,pdfname))
-        self.printToPdf(pdfname, QtGui.QPageLayout(QtGui.QPageSize(QtGui.QPageSize.A4 ), QtGui.QPageLayout.Portrait, QtCore.QMarginsF(0,0,0,0)))
+        pdfName=str(int(round(time.time() * 1000)))+".pdf"
+        print('save [%d bytes %s] to [%s]' % (len(html),url,pdfName))
+        self.printToPdf(pdfName, QtGui.QPageLayout(QtGui.QPageSize(QtGui.QPageSize.A4 ), QtGui.QPageLayout.Portrait, QtCore.QMarginsF(0,0,0,0)))
 
     #网页元素loadFinished时，和js/render是独立的，此时js不一定运行完，网页不一定渲染出来
     def handleLoadFinished(self):
@@ -181,6 +200,7 @@ setcssrule("#MathJax_Message","display","none")
         QtCore.QTimer.singleShot(1000, loop.quit);
         loop.exec_()
         self.toHtml(self.printpdf)
+
 
 def prasePytorchUrl(baseurl):
     page=requests.Session().get(baseurl) 
